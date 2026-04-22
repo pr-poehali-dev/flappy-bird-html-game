@@ -4,18 +4,48 @@ const CANVAS_WIDTH = 400;
 const CANVAS_HEIGHT = 600;
 
 const DIFFICULTIES = {
-  easy: { label: "Лёгкий", gravity: 0.35, jumpForce: -7, pipeSpeed: 2.2, pipeGap: 180, pipeInterval: 110 },
-  normal: { label: "Средний", gravity: 0.5, jumpForce: -8, pipeSpeed: 3.2, pipeGap: 145, pipeInterval: 90 },
-  hard: { label: "Сложный", gravity: 0.68, jumpForce: -9, pipeSpeed: 4.5, pipeGap: 115, pipeInterval: 70 },
+  easy:   { label: "Лёгкий",  gravity: 0.35, jumpForce: -7,  pipeSpeed: 2.2, pipeGap: 180, pipeInterval: 110 },
+  normal: { label: "Средний", gravity: 0.5,  jumpForce: -8,  pipeSpeed: 3.2, pipeGap: 145, pipeInterval: 90  },
+  hard:   { label: "Сложный", gravity: 0.68, jumpForce: -9,  pipeSpeed: 4.5, pipeGap: 115, pipeInterval: 70  },
 };
 
 type Difficulty = keyof typeof DIFFICULTIES;
-type GameState = "menu" | "playing" | "dead" | "scores";
+type GameState = "menu" | "playing" | "dead" | "scores" | "shop";
 
+// ─── Скины ────────────────────────────────────────────────────────────────────
+interface SkinDef {
+  id: string;
+  label: string;
+  price: number;
+  body: string;
+  wing: string;
+  beak: string;
+  eye: string;
+}
+
+const SKINS: SkinDef[] = [
+  { id: "classic",  label: "Классик",   price: 0,   body: "#111111", wing: "#555555", beak: "#111111", eye: "#ffffff" },
+  { id: "ghost",    label: "Призрак",   price: 30,  body: "#e0e0e0", wing: "#bbbbbb", beak: "#999999", eye: "#111111" },
+  { id: "midnight", label: "Ночь",      price: 60,  body: "#1a1a2e", wing: "#16213e", beak: "#0f3460", eye: "#e94560" },
+  { id: "gold",     label: "Золото",    price: 100, body: "#b8860b", wing: "#daa520", beak: "#8b6914", eye: "#ffffff" },
+  { id: "cherry",   label: "Вишня",     price: 80,  body: "#c0392b", wing: "#922b21", beak: "#7b241c", eye: "#ffffff" },
+  { id: "sky",      label: "Небесный",  price: 50,  body: "#2980b9", wing: "#1a5276", beak: "#154360", eye: "#ffffff" },
+  { id: "forest",   label: "Лесной",    price: 70,  body: "#27ae60", wing: "#1e8449", beak: "#196f3d", eye: "#ffffff" },
+  { id: "neon",     label: "Неон",      price: 150, body: "#111111", wing: "#333333", beak: "#00ff88", eye: "#00ff88" },
+];
+
+// ─── Interfaces ───────────────────────────────────────────────────────────────
 interface Pipe {
   x: number;
   topHeight: number;
   scored: boolean;
+}
+
+interface Coin {
+  x: number;
+  y: number;
+  collected: boolean;
+  pulse: number;
 }
 
 interface HighScore {
@@ -28,18 +58,17 @@ interface WindowWithWebkit extends Window {
   webkitAudioContext?: typeof AudioContext;
 }
 
+// ─── Audio ────────────────────────────────────────────────────────────────────
 function createAudioCtx(): AudioContext | null {
   try {
     const W = window as WindowWithWebkit;
     const Ctx = window.AudioContext || W.webkitAudioContext;
     if (!Ctx) return null;
     return new Ctx();
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-function playSound(ctx: AudioContext | null, type: "flap" | "score" | "die") {
+function playSound(ctx: AudioContext | null, type: "flap" | "score" | "die" | "coin") {
   if (!ctx) return;
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
@@ -49,40 +78,113 @@ function playSound(ctx: AudioContext | null, type: "flap" | "score" | "die") {
   if (type === "flap") {
     osc.frequency.setValueAtTime(440, ctx.currentTime);
     osc.frequency.exponentialRampToValueAtTime(220, ctx.currentTime + 0.08);
-    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.1);
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.1);
   } else if (type === "score") {
     osc.frequency.setValueAtTime(600, ctx.currentTime);
     osc.frequency.setValueAtTime(900, ctx.currentTime + 0.08);
-    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.2);
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.2);
+  } else if (type === "coin") {
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.18, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.15);
   } else {
     osc.type = "sawtooth";
     osc.frequency.setValueAtTime(300, ctx.currentTime);
     osc.frequency.exponentialRampToValueAtTime(50, ctx.currentTime + 0.4);
-    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.setValueAtTime(0.18, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.4);
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.4);
   }
 }
 
-const BIRD_SIZE = 26;
-const PIPE_WIDTH = 52;
+// ─── Constants ────────────────────────────────────────────────────────────────
+const BIRD_SIZE   = 26;
+const PIPE_WIDTH  = 52;
 const GROUND_HEIGHT = 60;
-const BIRD_X = 90;
+const BIRD_X      = 90;
+const STAMINA_MAX = 100;
+const COIN_RADIUS = 9;
 
+// ─── Draw bird ────────────────────────────────────────────────────────────────
+function drawBird(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number,
+  angle: number,
+  wingAngle: number,
+  skin: SkinDef,
+  staminaRatio: number
+) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  // stamina glow ring when low
+  if (staminaRatio < 0.3) {
+    const alpha = 0.15 + Math.sin(Date.now() * 0.01) * 0.1;
+    ctx.beginPath();
+    ctx.arc(0, 0, BIRD_SIZE / 2 + 6, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(220,60,60,${alpha})`;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  }
+
+  // body
+  ctx.fillStyle = skin.body;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, BIRD_SIZE / 2, BIRD_SIZE / 2.4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // eye white
+  ctx.fillStyle = skin.eye;
+  ctx.beginPath();
+  ctx.arc(6, -4, 5, 0, Math.PI * 2);
+  ctx.fill();
+  // pupil
+  ctx.fillStyle = skin.body;
+  ctx.beginPath();
+  ctx.arc(7.5, -4, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  // shine
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(8.5, -5, 1, 0, Math.PI * 2);
+  ctx.fill();
+
+  // wing
+  const wingOffset = Math.sin(wingAngle) * 4;
+  ctx.fillStyle = skin.wing;
+  ctx.beginPath();
+  ctx.ellipse(-4, 2 + wingOffset, 8, 5, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // beak
+  ctx.fillStyle = skin.beak;
+  ctx.beginPath();
+  ctx.moveTo(11, -1);
+  ctx.lineTo(18, 1);
+  ctx.lineTo(11, 3);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 export default function Index() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef({
     birdY: CANVAS_HEIGHT / 2,
     birdVY: 0,
     pipes: [] as Pipe[],
+    coins: [] as Coin[],
     score: 0,
+    coinsEarned: 0,
     frame: 0,
     animId: 0,
     state: "menu" as GameState,
@@ -90,51 +192,95 @@ export default function Index() {
     wingAngle: 0,
     deathY: 0,
     deathFrame: 0,
+    stamina: STAMINA_MAX,
+    exhausted: false,    // true when stamina hit 0 — can't jump until recharged to 30
+    activeSkinId: "classic",
   });
   const audioCtxRef = useRef<AudioContext | null>(null);
 
-  const [uiState, setUiState] = useState<GameState>("menu");
-  const [score, setScore] = useState(0);
-  const [difficulty, setDifficulty] = useState<Difficulty>("normal");
-  const [highScores, setHighScores] = useState<HighScore[]>([]);
-  const [bestScore, setBestScore] = useState(0);
+  const [uiState, setUiState]         = useState<GameState>("menu");
+  const [score, setScore]             = useState(0);
+  const [difficulty, setDifficulty]   = useState<Difficulty>("normal");
+  const [highScores, setHighScores]   = useState<HighScore[]>([]);
+  const [bestScore, setBestScore]     = useState(0);
+  const [totalCoins, setTotalCoins]   = useState(0);
+  const [ownedSkins, setOwnedSkins]   = useState<string[]>(["classic"]);
+  const [activeSkin, setActiveSkin]   = useState<string>("classic");
+  const [stamDisplay, setStamDisplay] = useState(STAMINA_MAX);
+  const [shopMsg, setShopMsg]         = useState("");
 
+  // ── load saved data ──
   useEffect(() => {
-    const saved = localStorage.getItem("flappy_scores");
-    if (saved) {
-      const parsed: HighScore[] = JSON.parse(saved);
+    const scores = localStorage.getItem("flappy_scores");
+    if (scores) {
+      const parsed: HighScore[] = JSON.parse(scores);
       setHighScores(parsed);
-      if (parsed.length > 0) setBestScore(Math.max(...parsed.map((s) => s.score)));
+      if (parsed.length) setBestScore(Math.max(...parsed.map((s) => s.score)));
     }
+    const coins = localStorage.getItem("flappy_coins");
+    if (coins) setTotalCoins(Number(coins));
+    const owned = localStorage.getItem("flappy_owned");
+    if (owned) setOwnedSkins(JSON.parse(owned));
+    const skin = localStorage.getItem("flappy_skin");
+    if (skin) { setActiveSkin(skin); gameRef.current.activeSkinId = skin; }
   }, []);
 
-  const saveScore = useCallback((s: number, diff: Difficulty) => {
-    if (s === 0) return;
-    const entry: HighScore = {
-      score: s,
-      difficulty: diff,
-      date: new Date().toLocaleDateString("ru-RU"),
-    };
-    setHighScores((prev) => {
-      const next = [entry, ...prev].sort((a, b) => b.score - a.score).slice(0, 10);
-      localStorage.setItem("flappy_scores", JSON.stringify(next));
-      const best = Math.max(...next.map((x) => x.score));
-      setBestScore(best);
+  // ── save coins helper ──
+  const addCoins = useCallback((n: number) => {
+    setTotalCoins((prev) => {
+      const next = prev + n;
+      localStorage.setItem("flappy_coins", String(next));
       return next;
     });
   }, []);
 
+  // ── save score ──
+  const saveScore = useCallback((s: number, diff: Difficulty) => {
+    if (s === 0) return;
+    const entry: HighScore = { score: s, difficulty: diff, date: new Date().toLocaleDateString("ru-RU") };
+    setHighScores((prev) => {
+      const next = [entry, ...prev].sort((a, b) => b.score - a.score).slice(0, 10);
+      localStorage.setItem("flappy_scores", JSON.stringify(next));
+      setBestScore(Math.max(...next.map((x) => x.score)));
+      return next;
+    });
+  }, []);
+
+  // ── buy skin ──
+  const buySkin = useCallback((skin: SkinDef) => {
+    setTotalCoins((prev) => {
+      if (prev < skin.price) { setShopMsg("Недостаточно монет!"); setTimeout(() => setShopMsg(""), 1500); return prev; }
+      const next = prev - skin.price;
+      localStorage.setItem("flappy_coins", String(next));
+      setOwnedSkins((o) => {
+        const upd = [...o, skin.id];
+        localStorage.setItem("flappy_owned", JSON.stringify(upd));
+        return upd;
+      });
+      setShopMsg("Куплено!");
+      setTimeout(() => setShopMsg(""), 1500);
+      return next;
+    });
+  }, []);
+
+  const selectSkin = useCallback((id: string) => {
+    setActiveSkin(id);
+    gameRef.current.activeSkinId = id;
+    localStorage.setItem("flappy_skin", id);
+  }, []);
+
+  // ── draw scene ──
   const drawScene = useCallback((ctx: CanvasRenderingContext2D) => {
     const g = gameRef.current;
     const diff = DIFFICULTIES[g.difficulty];
+    const skin = SKINS.find((s) => s.id === g.activeSkinId) ?? SKINS[0];
+    const staminaRatio = g.stamina / STAMINA_MAX;
 
     ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-    // background
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-    // subtle grid
+    // grid
     ctx.strokeStyle = "#f0f0f0";
     ctx.lineWidth = 1;
     for (let x = 0; x < CANVAS_WIDTH; x += 40) {
@@ -148,22 +294,36 @@ export default function Index() {
     g.pipes.forEach((pipe) => {
       const botY = pipe.topHeight + diff.pipeGap;
       const botH = CANVAS_HEIGHT - GROUND_HEIGHT - botY;
-
       ctx.fillStyle = "#111111";
-      // top pipe
       ctx.fillRect(pipe.x, 0, PIPE_WIDTH, pipe.topHeight);
-      // top cap
       ctx.fillRect(pipe.x - 4, pipe.topHeight - 14, PIPE_WIDTH + 8, 14);
-
-      // bottom pipe
       ctx.fillRect(pipe.x, botY, PIPE_WIDTH, botH);
-      // bottom cap
       ctx.fillRect(pipe.x - 4, botY, PIPE_WIDTH + 8, 14);
-
-      // white inner lines
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(pipe.x + 10, 0, 4, pipe.topHeight - 14);
       ctx.fillRect(pipe.x + 10, botY + 14, 4, botH - 14);
+    });
+
+    // coins
+    g.coins.forEach((coin) => {
+      if (coin.collected) return;
+      coin.pulse = (coin.pulse + 0.07) % (Math.PI * 2);
+      const r = COIN_RADIUS + Math.sin(coin.pulse) * 1.5;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(coin.x, coin.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = "#f5c518";
+      ctx.fill();
+      ctx.strokeStyle = "#c9a000";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      // ₽ symbol
+      ctx.fillStyle = "#7a5f00";
+      ctx.font = `bold ${Math.round(r)}px monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("$", coin.x, coin.y + 0.5);
+      ctx.restore();
     });
 
     // ground
@@ -171,7 +331,6 @@ export default function Index() {
     ctx.fillRect(0, CANVAS_HEIGHT - GROUND_HEIGHT, CANVAS_WIDTH, GROUND_HEIGHT);
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, CANVAS_HEIGHT - GROUND_HEIGHT, CANVAS_WIDTH, 3);
-    // ground pattern
     ctx.fillStyle = "#222222";
     for (let x = (g.frame * 2) % 40; x < CANVAS_WIDTH; x += 40) {
       ctx.fillRect(x, CANVAS_HEIGHT - GROUND_HEIGHT + 10, 20, 3);
@@ -179,59 +338,87 @@ export default function Index() {
 
     // bird
     const birdY = g.state === "dead" ? g.deathY : g.birdY;
-    const angle = g.state === "dead" ? Math.min(Math.PI / 2, g.deathFrame * 0.08) : Math.max(-0.4, Math.min(0.6, g.birdVY * 0.07));
+    const angle = g.state === "dead"
+      ? Math.min(Math.PI / 2, g.deathFrame * 0.08)
+      : Math.max(-0.4, Math.min(0.6, g.birdVY * 0.07));
+    drawBird(ctx, BIRD_X, birdY, angle, g.wingAngle, skin, staminaRatio);
 
-    ctx.save();
-    ctx.translate(BIRD_X, birdY);
-    ctx.rotate(angle);
+    if (g.state !== "playing") return;
 
-    // body
+    // ── HUD ──
+    // score
     ctx.fillStyle = "#111111";
-    ctx.beginPath();
-    ctx.ellipse(0, 0, BIRD_SIZE / 2, BIRD_SIZE / 2.4, 0, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.font = "bold 32px 'Space Grotesk', monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(String(g.score), CANVAS_WIDTH / 2, 52);
 
-    // eye
-    ctx.fillStyle = "#ffffff";
+    // coin counter
+    ctx.fillStyle = "#f5c518";
     ctx.beginPath();
-    ctx.arc(6, -4, 5, 0, Math.PI * 2);
+    ctx.arc(20, 20, 8, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = "#c9a000";
+    ctx.lineWidth = 1;
+    ctx.stroke();
     ctx.fillStyle = "#111111";
-    ctx.beginPath();
-    ctx.arc(7.5, -4, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#ffffff";
-    ctx.beginPath();
-    ctx.arc(8.5, -5, 1, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.font = "bold 14px 'Space Grotesk', monospace";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(g.coinsEarned), 34, 20);
 
-    // wing
-    const wingOffset = Math.sin(g.wingAngle) * 4;
-    ctx.fillStyle = "#555555";
-    ctx.beginPath();
-    ctx.ellipse(-4, 2 + wingOffset, 8, 5, -0.3, 0, Math.PI * 2);
-    ctx.fill();
+    // stamina bar
+    const BAR_W = 120;
+    const BAR_H = 8;
+    const BAR_X = CANVAS_WIDTH - BAR_W - 12;
+    const BAR_Y = 12;
 
-    // beak
-    ctx.fillStyle = "#111111";
+    ctx.fillStyle = "#eeeeee";
     ctx.beginPath();
-    ctx.moveTo(11, -1);
-    ctx.lineTo(18, 1);
-    ctx.lineTo(11, 3);
-    ctx.closePath();
+    ctx.roundRect(BAR_X, BAR_Y, BAR_W, BAR_H, 4);
     ctx.fill();
 
-    ctx.restore();
+    const ratio = g.stamina / STAMINA_MAX;
+    const barColor = ratio > 0.5 ? "#111111" : ratio > 0.25 ? "#e67e22" : "#e74c3c";
+    ctx.fillStyle = barColor;
+    ctx.beginPath();
+    ctx.roundRect(BAR_X, BAR_Y, BAR_W * ratio, BAR_H, 4);
+    ctx.fill();
 
-    // score in game
-    if (g.state === "playing") {
-      ctx.fillStyle = "#111111";
-      ctx.font = "bold 36px 'Space Grotesk', monospace";
+    // label
+    ctx.fillStyle = "#888888";
+    ctx.font = "10px 'Space Grotesk', monospace";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "top";
+    ctx.fillText("ВЫНОСЛИВОСТЬ", CANVAS_WIDTH - 12, BAR_Y + BAR_H + 3);
+
+    // exhausted warning
+    if (g.exhausted) {
+      ctx.fillStyle = "rgba(231,76,60,0.85)";
+      ctx.font = "bold 13px 'Space Grotesk', monospace";
       ctx.textAlign = "center";
-      ctx.fillText(String(g.score), CANVAS_WIDTH / 2, 60);
+      ctx.textBaseline = "middle";
+      ctx.fillText("⚡ ВОССТАНОВЛЕНИЕ...", CANVAS_WIDTH / 2, 80);
     }
   }, []);
 
+  // ── death animation loop ──
+  const deathLoop = useCallback(() => {
+    const g = gameRef.current;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    if (g.state !== "dead") return;
+    g.deathFrame++;
+    g.deathY = Math.min(CANVAS_HEIGHT - GROUND_HEIGHT - BIRD_SIZE, g.deathY + g.deathFrame * 0.5);
+    drawScene(ctx);
+    if (g.deathY < CANVAS_HEIGHT - GROUND_HEIGHT - BIRD_SIZE) {
+      g.animId = requestAnimationFrame(deathLoop);
+    }
+  }, [drawScene]);
+
+  // ── main game loop ──
   const gameLoop = useCallback(() => {
     const g = gameRef.current;
     const diff = DIFFICULTIES[g.difficulty];
@@ -239,11 +426,21 @@ export default function Index() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
     if (g.state !== "playing") { drawScene(ctx); return; }
 
     g.frame++;
     g.wingAngle += 0.2;
+
+    // stamina: regen passively, drain when falling fast (not jumping)
+    const falling = g.birdVY > 1;
+    if (!falling) {
+      g.stamina = Math.min(STAMINA_MAX, g.stamina + 0.4);
+    } else {
+      g.stamina = Math.max(0, g.stamina - 0.15);
+    }
+    if (g.stamina <= 0) g.exhausted = true;
+    if (g.exhausted && g.stamina >= 30) g.exhausted = false;
+    setStamDisplay(g.stamina);
 
     // physics
     g.birdVY += diff.gravity;
@@ -255,9 +452,13 @@ export default function Index() {
       const maxTop = CANVAS_HEIGHT - GROUND_HEIGHT - diff.pipeGap - 60;
       const topHeight = Math.random() * (maxTop - minTop) + minTop;
       g.pipes.push({ x: CANVAS_WIDTH + 10, topHeight, scored: false });
+
+      // spawn coin in the gap center
+      const coinY = topHeight + diff.pipeGap / 2;
+      g.coins.push({ x: CANVAS_WIDTH + 10 + PIPE_WIDTH / 2 + 60, y: coinY, collected: false, pulse: 0 });
     }
 
-    // move pipes
+    // move pipes & score
     g.pipes = g.pipes.filter((p) => p.x + PIPE_WIDTH + 10 > 0);
     g.pipes.forEach((pipe) => {
       pipe.x -= diff.pipeSpeed;
@@ -269,59 +470,51 @@ export default function Index() {
       }
     });
 
+    // move coins
+    g.coins = g.coins.filter((c) => c.x + COIN_RADIUS > 0);
+    g.coins.forEach((coin) => {
+      if (coin.collected) return;
+      coin.x -= diff.pipeSpeed;
+      // collect
+      const dx = BIRD_X - coin.x;
+      const dy = g.birdY - coin.y;
+      if (Math.sqrt(dx * dx + dy * dy) < BIRD_SIZE / 2 + COIN_RADIUS) {
+        coin.collected = true;
+        g.coinsEarned++;
+        playSound(audioCtxRef.current, "coin");
+      }
+    });
+
     // collision
     const birdLeft = BIRD_X - BIRD_SIZE / 2 + 4;
     const birdRight = BIRD_X + BIRD_SIZE / 2 - 4;
     const birdTop = g.birdY - BIRD_SIZE / 2 + 4;
     const birdBot = g.birdY + BIRD_SIZE / 2 - 4;
 
-    if (birdBot >= CANVAS_HEIGHT - GROUND_HEIGHT || birdTop <= 0) {
+    let died = false;
+    if (birdBot >= CANVAS_HEIGHT - GROUND_HEIGHT || birdTop <= 0) died = true;
+    for (const pipe of g.pipes) {
+      const botY = pipe.topHeight + diff.pipeGap;
+      if (birdRight > pipe.x - 4 && birdLeft < pipe.x + PIPE_WIDTH + 4) {
+        if (birdTop < pipe.topHeight || birdBot > botY) { died = true; break; }
+      }
+    }
+
+    if (died) {
       g.state = "dead";
       g.deathY = g.birdY;
       g.deathFrame = 0;
       playSound(audioCtxRef.current, "die");
       saveScore(g.score, g.difficulty);
+      addCoins(g.coinsEarned);
       setUiState("dead");
       setScore(g.score);
-    }
-
-    for (const pipe of g.pipes) {
-      const botY = pipe.topHeight + diff.pipeGap;
-      const pipeRight = pipe.x + PIPE_WIDTH + 4;
-      const pipeLeft = pipe.x - 4;
-      if (birdRight > pipeLeft && birdLeft < pipeRight) {
-        if (birdTop < pipe.topHeight || birdBot > botY) {
-          g.state = "dead";
-          g.deathY = g.birdY;
-          g.deathFrame = 0;
-          playSound(audioCtxRef.current, "die");
-          saveScore(g.score, g.difficulty);
-          setUiState("dead");
-          setScore(g.score);
-          break;
-        }
-      }
+      return;
     }
 
     drawScene(ctx);
     g.animId = requestAnimationFrame(gameLoop);
-  }, [drawScene, saveScore]);
-
-  const deathLoop = useCallback(() => {
-    const g = gameRef.current;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    if (g.state !== "dead") return;
-
-    g.deathFrame++;
-    g.deathY = Math.min(CANVAS_HEIGHT - GROUND_HEIGHT - BIRD_SIZE, g.deathY + g.deathFrame * 0.5);
-    drawScene(ctx);
-    if (g.deathY < CANVAS_HEIGHT - GROUND_HEIGHT - BIRD_SIZE) {
-      g.animId = requestAnimationFrame(deathLoop);
-    }
-  }, [drawScene]);
+  }, [drawScene, saveScore, addCoins]);
 
   useEffect(() => {
     if (uiState === "dead") {
@@ -330,6 +523,7 @@ export default function Index() {
     }
   }, [uiState, deathLoop]);
 
+  // ── start game ──
   const startGame = useCallback(() => {
     if (!audioCtxRef.current) audioCtxRef.current = createAudioCtx();
     const g = gameRef.current;
@@ -337,22 +531,31 @@ export default function Index() {
     g.birdY = CANVAS_HEIGHT / 2;
     g.birdVY = 0;
     g.pipes = [];
+    g.coins = [];
     g.score = 0;
+    g.coinsEarned = 0;
     g.frame = 0;
     g.wingAngle = 0;
+    g.stamina = STAMINA_MAX;
+    g.exhausted = false;
     g.state = "playing";
     g.difficulty = difficulty;
     setScore(0);
+    setStamDisplay(STAMINA_MAX);
     setUiState("playing");
     g.animId = requestAnimationFrame(gameLoop);
   }, [difficulty, gameLoop]);
 
+  // ── jump ──
   const jump = useCallback(() => {
     const g = gameRef.current;
     if (g.state !== "playing") return;
+    if (g.exhausted) return;
     const diff = DIFFICULTIES[g.difficulty];
     g.birdVY = diff.jumpForce;
+    g.stamina = Math.max(0, g.stamina - 12);
     g.wingAngle = 0;
+    if (g.stamina <= 0) g.exhausted = true;
     playSound(audioCtxRef.current, "flap");
   }, []);
 
@@ -364,9 +567,9 @@ export default function Index() {
     return () => window.removeEventListener("keydown", onKey);
   }, [jump]);
 
-  // draw menu/idle state
+  // draw idle screens
   useEffect(() => {
-    if (uiState === "menu" || uiState === "scores") {
+    if (uiState === "menu" || uiState === "scores" || uiState === "shop") {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const ctx = canvas.getContext("2d");
@@ -376,28 +579,26 @@ export default function Index() {
     }
   }, [uiState, drawScene]);
 
-  const diffColors: Record<Difficulty, string> = {
-    easy: "bg-white border-2 border-black text-black",
-    normal: "bg-black text-white border-2 border-black",
-    hard: "bg-white border-2 border-black text-black",
-  };
+  // ── render ──
+  const currentSkin = SKINS.find((s) => s.id === activeSkin) ?? SKINS[0];
+  const staminaPct = stamDisplay / STAMINA_MAX;
 
   return (
-    <div
-      className="min-h-screen flex items-center justify-center"
-      style={{ background: "#f5f5f5", fontFamily: "'Space Grotesk', sans-serif" }}
-    >
+    <div className="min-h-screen flex items-center justify-center" style={{ background: "#f5f5f5", fontFamily: "'Space Grotesk', sans-serif" }}>
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" />
 
-      <div className="flex flex-col items-center gap-6">
-        {/* title */}
-        <div className="text-center">
-          <h1 style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 32, letterSpacing: "-1px", color: "#111" }}>
-            FLAPPY BIRD
-          </h1>
-          {bestScore > 0 && (
-            <p style={{ fontSize: 13, color: "#888", marginTop: 2 }}>Рекорд: {bestScore}</p>
-          )}
+      <div className="flex flex-col items-center gap-4">
+
+        {/* title + coins */}
+        <div className="flex items-center justify-between w-full" style={{ maxWidth: CANVAS_WIDTH }}>
+          <div>
+            <h1 style={{ fontWeight: 700, fontSize: 28, letterSpacing: "-1px", color: "#111", margin: 0 }}>FLAPPY BIRD</h1>
+            {bestScore > 0 && <p style={{ fontSize: 12, color: "#aaa", margin: 0 }}>Рекорд: {bestScore}</p>}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#111", borderRadius: 20, padding: "6px 14px" }}>
+            <span style={{ fontSize: 16 }}>🪙</span>
+            <span style={{ fontWeight: 700, color: "#f5c518", fontSize: 16 }}>{totalCoins}</span>
+          </div>
         </div>
 
         {/* canvas */}
@@ -406,167 +607,172 @@ export default function Index() {
             ref={canvasRef}
             width={CANVAS_WIDTH}
             height={CANVAS_HEIGHT}
-            style={{
-              display: "block",
-              border: "2px solid #111",
-              borderRadius: 4,
-              cursor: uiState === "playing" ? "none" : "default",
-              userSelect: "none",
-              touchAction: "none",
-            }}
+            style={{ display: "block", border: "2px solid #111", borderRadius: 4, cursor: uiState === "playing" ? "none" : "default", userSelect: "none", touchAction: "none" }}
             onClick={jump}
             onTouchStart={(e) => { e.preventDefault(); jump(); }}
           />
 
-          {/* menu overlay */}
+          {/* ── MENU ── */}
           {uiState === "menu" && (
-            <div
-              style={{
-                position: "absolute", inset: 0, display: "flex", flexDirection: "column",
-                alignItems: "center", justifyContent: "center", gap: 20,
-                background: "rgba(255,255,255,0.88)", borderRadius: 2,
-              }}
-            >
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, background: "rgba(255,255,255,0.9)", borderRadius: 2 }}>
               <div style={{ textAlign: "center" }}>
-                <p style={{ fontSize: 13, color: "#666", marginBottom: 16, letterSpacing: "0.05em", textTransform: "uppercase" }}>Сложность</p>
-                <div style={{ display: "flex", gap: 8 }}>
+                <p style={{ fontSize: 11, color: "#999", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10 }}>Сложность</p>
+                <div style={{ display: "flex", gap: 6 }}>
                   {(Object.keys(DIFFICULTIES) as Difficulty[]).map((d) => (
-                    <button
-                      key={d}
-                      onClick={() => setDifficulty(d)}
-                      style={{
-                        padding: "8px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                        border: "2px solid #111", borderRadius: 2,
-                        background: difficulty === d ? "#111" : "#fff",
-                        color: difficulty === d ? "#fff" : "#111",
-                        transition: "all 0.15s",
-                        fontFamily: "'Space Grotesk', sans-serif",
-                      }}
-                    >
+                    <button key={d} onClick={() => setDifficulty(d)} style={{ padding: "7px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", border: "2px solid #111", borderRadius: 2, background: difficulty === d ? "#111" : "#fff", color: difficulty === d ? "#fff" : "#111", fontFamily: "'Space Grotesk', sans-serif", transition: "all 0.12s" }}>
                       {DIFFICULTIES[d].label}
                     </button>
                   ))}
                 </div>
               </div>
 
-              <button
-                onClick={startGame}
-                style={{
-                  padding: "14px 48px", fontSize: 16, fontWeight: 700, cursor: "pointer",
-                  border: "2px solid #111", borderRadius: 2,
-                  background: "#111", color: "#fff",
-                  fontFamily: "'Space Grotesk', sans-serif",
-                  letterSpacing: "0.04em",
-                }}
-              >
+              {/* stamina hint */}
+              <div style={{ background: "#f8f8f8", border: "1px solid #eee", borderRadius: 4, padding: "10px 20px", maxWidth: 280, textAlign: "center" }}>
+                <p style={{ fontSize: 12, color: "#666", margin: 0, lineHeight: 1.6 }}>
+                  ⚡ <b>Стамина</b> — каждый прыжок тратит энергию.<br />
+                  Когда заканчивается — жди восстановления.<br />
+                  🪙 Собирай монеты в пролётах!
+                </p>
+              </div>
+
+              <button onClick={startGame} style={{ padding: "13px 52px", fontSize: 16, fontWeight: 700, cursor: "pointer", border: "2px solid #111", borderRadius: 2, background: "#111", color: "#fff", fontFamily: "'Space Grotesk', sans-serif", letterSpacing: "0.04em" }}>
                 СТАРТ
               </button>
 
-              <p style={{ fontSize: 12, color: "#aaa" }}>Пробел / тап для прыжка</p>
-
-              {highScores.length > 0 && (
-                <button
-                  onClick={() => setUiState("scores")}
-                  style={{
-                    fontSize: 13, color: "#666", background: "none", border: "none",
-                    cursor: "pointer", textDecoration: "underline", fontFamily: "'Space Grotesk', sans-serif",
-                  }}
-                >
-                  Таблица рекордов
+              <div style={{ display: "flex", gap: 12 }}>
+                {highScores.length > 0 && (
+                  <button onClick={() => setUiState("scores")} style={{ fontSize: 13, color: "#666", background: "none", border: "1px solid #ddd", borderRadius: 2, padding: "6px 14px", cursor: "pointer", fontFamily: "'Space Grotesk', sans-serif" }}>
+                    Рекорды
+                  </button>
+                )}
+                <button onClick={() => setUiState("shop")} style={{ fontSize: 13, color: "#111", background: "#f5c518", border: "none", borderRadius: 2, padding: "6px 14px", cursor: "pointer", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600 }}>
+                  🛒 Магазин
                 </button>
-              )}
+              </div>
             </div>
           )}
 
-          {/* dead overlay */}
+          {/* ── DEAD ── */}
           {uiState === "dead" && (
-            <div
-              style={{
-                position: "absolute", inset: 0, display: "flex", flexDirection: "column",
-                alignItems: "center", justifyContent: "center", gap: 16,
-                background: "rgba(255,255,255,0.88)", borderRadius: 2,
-              }}
-            >
-              <p style={{ fontSize: 14, color: "#888", textTransform: "uppercase", letterSpacing: "0.1em" }}>Конец игры</p>
-              <p style={{ fontSize: 64, fontWeight: 700, color: "#111", lineHeight: 1 }}>{score}</p>
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, background: "rgba(255,255,255,0.9)", borderRadius: 2 }}>
+              <p style={{ fontSize: 12, color: "#888", textTransform: "uppercase", letterSpacing: "0.1em", margin: 0 }}>Конец игры</p>
+              <p style={{ fontSize: 64, fontWeight: 700, color: "#111", lineHeight: 1, margin: 0 }}>{score}</p>
               {bestScore === score && score > 0 && (
-                <p style={{ fontSize: 13, color: "#111", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                  ★ Новый рекорд!
-                </p>
+                <p style={{ fontSize: 13, color: "#111", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", margin: 0 }}>★ Новый рекорд!</p>
               )}
+              {/* coins earned */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff9e0", border: "1px solid #f5c518", borderRadius: 20, padding: "6px 16px" }}>
+                <span>🪙</span>
+                <span style={{ fontWeight: 700, color: "#b8860b", fontSize: 15 }}>+{gameRef.current.coinsEarned} монет</span>
+              </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 8, width: 200 }}>
-                <button
-                  onClick={startGame}
-                  style={{
-                    padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer",
-                    border: "2px solid #111", borderRadius: 2,
-                    background: "#111", color: "#fff",
-                    fontFamily: "'Space Grotesk', sans-serif",
-                  }}
-                >
+                <button onClick={startGame} style={{ padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", border: "2px solid #111", borderRadius: 2, background: "#111", color: "#fff", fontFamily: "'Space Grotesk', sans-serif" }}>
                   СНОВА
                 </button>
-                <button
-                  onClick={() => setUiState("menu")}
-                  style={{
-                    padding: "10px 0", fontSize: 14, fontWeight: 500, cursor: "pointer",
-                    border: "2px solid #111", borderRadius: 2,
-                    background: "#fff", color: "#111",
-                    fontFamily: "'Space Grotesk', sans-serif",
-                  }}
-                >
+                <button onClick={() => setUiState("menu")} style={{ padding: "9px 0", fontSize: 13, fontWeight: 500, cursor: "pointer", border: "2px solid #111", borderRadius: 2, background: "#fff", color: "#111", fontFamily: "'Space Grotesk', sans-serif" }}>
                   В меню
                 </button>
               </div>
             </div>
           )}
 
-          {/* scores overlay */}
+          {/* ── SCORES ── */}
           {uiState === "scores" && (
-            <div
-              style={{
-                position: "absolute", inset: 0, display: "flex", flexDirection: "column",
-                alignItems: "center", padding: "32px 28px", gap: 4,
-                background: "rgba(255,255,255,0.97)", borderRadius: 2, overflowY: "auto",
-              }}
-            >
-              <p style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 12 }}>
-                Таблица рекордов
-              </p>
-
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", padding: "28px 24px", gap: 4, background: "rgba(255,255,255,0.97)", borderRadius: 2, overflowY: "auto" }}>
+              <p style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 10 }}>Таблица рекордов</p>
               {highScores.map((s, i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: "flex", alignItems: "center", width: "100%",
-                    borderBottom: "1px solid #eee", padding: "8px 0", gap: 12,
-                  }}
-                >
+                <div key={i} style={{ display: "flex", alignItems: "center", width: "100%", borderBottom: "1px solid #eee", padding: "7px 0", gap: 10 }}>
                   <span style={{ fontSize: 12, color: "#aaa", width: 20, textAlign: "right" }}>#{i + 1}</span>
                   <span style={{ fontSize: 22, fontWeight: 700, color: "#111", flex: 1 }}>{s.score}</span>
                   <span style={{ fontSize: 11, color: "#999" }}>{DIFFICULTIES[s.difficulty].label}</span>
                   <span style={{ fontSize: 11, color: "#bbb" }}>{s.date}</span>
                 </div>
               ))}
+              <button onClick={() => setUiState("menu")} style={{ marginTop: 16, padding: "9px 28px", fontSize: 13, fontWeight: 600, cursor: "pointer", border: "2px solid #111", borderRadius: 2, background: "#111", color: "#fff", fontFamily: "'Space Grotesk', sans-serif" }}>
+                Назад
+              </button>
+            </div>
+          )}
 
-              <button
-                onClick={() => setUiState("menu")}
-                style={{
-                  marginTop: 20, padding: "10px 32px", fontSize: 13, fontWeight: 600,
-                  cursor: "pointer", border: "2px solid #111", borderRadius: 2,
-                  background: "#111", color: "#fff", fontFamily: "'Space Grotesk', sans-serif",
-                }}
-              >
+          {/* ── SHOP ── */}
+          {uiState === "shop" && (
+            <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.97)", borderRadius: 2, overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                <p style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.12em", margin: 0 }}>Магазин скинов</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ fontSize: 14 }}>🪙</span>
+                  <span style={{ fontWeight: 700, color: "#b8860b", fontSize: 14 }}>{totalCoins}</span>
+                </div>
+              </div>
+
+              {shopMsg && (
+                <div style={{ textAlign: "center", padding: "8px", background: shopMsg === "Куплено!" ? "#e8f8e8" : "#fde8e8", border: `1px solid ${shopMsg === "Куплено!" ? "#aed6ae" : "#f5aeae"}`, borderRadius: 4, fontSize: 13, fontWeight: 600, color: shopMsg === "Куплено!" ? "#2e7d32" : "#c62828" }}>
+                  {shopMsg}
+                </div>
+              )}
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {SKINS.map((skin) => {
+                  const owned = ownedSkins.includes(skin.id);
+                  const isActive = activeSkin === skin.id;
+                  return (
+                    <div key={skin.id} style={{ border: isActive ? "2px solid #111" : "1px solid #e0e0e0", borderRadius: 6, padding: "10px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: isActive ? "#f8f8f8" : "#fff" }}>
+                      {/* mini bird preview */}
+                      <div style={{ position: "relative", width: 50, height: 40, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <svg width="50" height="40" style={{ overflow: "visible" }}>
+                          <ellipse cx="25" cy="20" rx="13" ry="10.8" fill={skin.body} />
+                          <circle cx="31" cy="15" r="5" fill={skin.eye} />
+                          <circle cx="32.5" cy="15" r="2.5" fill={skin.body} />
+                          <circle cx="33.5" cy="14" r="1" fill="#fff" />
+                          <ellipse cx="21" cy="22" rx="8" ry="5" fill={skin.wing} />
+                          <polygon points="36,19 43,21 36,23" fill={skin.beak} />
+                        </svg>
+                      </div>
+
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>{skin.label}</span>
+
+                      {skin.price === 0 ? (
+                        <span style={{ fontSize: 11, color: "#aaa" }}>Бесплатно</span>
+                      ) : (
+                        <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                          <span style={{ fontSize: 12 }}>🪙</span>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: "#b8860b" }}>{skin.price}</span>
+                        </div>
+                      )}
+
+                      {isActive ? (
+                        <span style={{ fontSize: 11, fontWeight: 700, color: "#111", textTransform: "uppercase", letterSpacing: "0.06em" }}>Активен</span>
+                      ) : owned ? (
+                        <button onClick={() => selectSkin(skin.id)} style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", border: "1.5px solid #111", borderRadius: 2, background: "#fff", color: "#111", cursor: "pointer", fontFamily: "'Space Grotesk', sans-serif" }}>
+                          Выбрать
+                        </button>
+                      ) : (
+                        <button onClick={() => buySkin(skin)} disabled={totalCoins < skin.price} style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", border: "none", borderRadius: 2, background: totalCoins >= skin.price ? "#111" : "#ccc", color: "#fff", cursor: totalCoins >= skin.price ? "pointer" : "not-allowed", fontFamily: "'Space Grotesk', sans-serif" }}>
+                          Купить
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button onClick={() => setUiState("menu")} style={{ marginTop: 6, padding: "9px 0", fontSize: 13, fontWeight: 600, cursor: "pointer", border: "2px solid #111", borderRadius: 2, background: "#111", color: "#fff", fontFamily: "'Space Grotesk', sans-serif" }}>
                 Назад
               </button>
             </div>
           )}
         </div>
 
-        {/* live score outside during playing */}
+        {/* stamina bar below canvas during play */}
         {uiState === "playing" && (
-          <p style={{ fontSize: 13, color: "#888" }}>Счёт: {score}</p>
+          <div style={{ width: CANVAS_WIDTH, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 11, color: "#888", whiteSpace: "nowrap" }}>⚡ Стамина</span>
+            <div style={{ flex: 1, height: 6, background: "#eee", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${staminaPct * 100}%`, background: staminaPct > 0.5 ? "#111" : staminaPct > 0.25 ? "#e67e22" : "#e74c3c", borderRadius: 3, transition: "width 0.1s, background 0.3s" }} />
+            </div>
+            <span style={{ fontSize: 11, color: "#888", minWidth: 30, textAlign: "right" }}>{Math.round(stamDisplay)}</span>
+          </div>
         )}
       </div>
     </div>
